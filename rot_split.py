@@ -67,7 +67,9 @@ def alarmHandler(signum, frame):
     raise AlarmException
 
 def new_command_request(prompt = '\nEnter "S" to switch satellites, "C" to change command, do nothing to continue: ', timeout = REQUEST_TIMEOUT):
-    #non-blocking raw input (issues with blocking interruption)
+    '''
+    Uses non-blocking raw input to interrupt loop (issues with blocking interruption)
+    '''
     signal.signal(signal.SIGALRM, alarmHandler)
     signal.alarm(timeout)
     global user_choice
@@ -83,6 +85,9 @@ def new_command_request(prompt = '\nEnter "S" to switch satellites, "C" to chang
     return user_choice
 
 def new_command_execute(user_input):
+    '''
+    Takes user_input from new_command_request and executes appropriate command
+    '''
     if user_input == 'S':
         select_satellite()
         print "Executing new command..."
@@ -129,9 +134,10 @@ def main():
 
 
 
-#TODO: PyEphem frequency tracking is a thing. Look into it to replace gpredict.
+#TODO: Test PyEphem frequecy tracking
+#TODO: Test pass time predition
 #TODO: Add ability to switch between satellites. Currently having issue appending sat list from nostradamus.
-#TODO: prediction capabilities (such as pass time)
+
 
 
 
@@ -147,6 +153,8 @@ def main():
         start_tracker(satellite)
         check_LOS(satellite, pos)
 
+#Loop 1: If satellite not in LOS (i.e IN_RANGE frm check_LOS is False) then script loops the following
+#print sat pos, execute user command, request new user command execute new user command        
         while IN_RANGE is False:
             check_satellite(satellite, pos)
             command_execute()
@@ -169,7 +177,7 @@ def main():
             new_command_execute(user_choice)
             break
 
-        time.sleep(2)
+        time.sleep(1)
 
 
 def command_execute():
@@ -178,14 +186,12 @@ def command_execute():
         quit()
     elif selection == 'p':
         get_position(az, el, rotorcmd)
-
-
     elif selection == 'P' and IN_RANGE:
         valid_set = set_position(az, el, rotorcmd)
-        '''
+        ''' Uncomment this if you want to exit script when there is a Hamlib Error (RPRT -1)
         if not valid_set:
             print "%s out of range. Exiting." % satellite
-            break
+            quit()
         '''
     elif selection == 'Q':
         print "\nParking the deathstar...\n"
