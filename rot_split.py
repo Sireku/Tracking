@@ -136,7 +136,7 @@ def main():
 
 #TODO: Test PyEphem frequecy tracking
 #TODO: Test pass time predition
-#TODO: Add ability to switch between satellites. Currently having issue appending sat list from nostradamus.
+#TODO: Test plural version of functions to add satellite and load tles (issues before with appending sat list)
 
 
 
