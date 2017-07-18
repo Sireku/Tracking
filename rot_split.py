@@ -13,6 +13,7 @@ import errno
 import time
 import nostradamus
 import signal
+from math import *
 
 # Constants
 HOST        = 'localhost'
@@ -20,6 +21,7 @@ azPORT      = 4535
 elPORT      = 4537
 REC_SZ      = 1024
 RUN_FOREVER = True
+LIGHT_SPEED = 299792 #km/s
 
 
 REQUEST_TIMEOUT = 10 #seconds
@@ -67,9 +69,7 @@ def alarmHandler(signum, frame):
     raise AlarmException
 
 def new_command_request(prompt = '\nEnter "S" to switch satellites, "C" to change command, do nothing to continue: ', timeout = REQUEST_TIMEOUT):
-    '''
-    Uses non-blocking raw input to interrupt loop (issues with blocking interruption)
-    '''
+    #non-blocking raw input (issues with blocking interruption)
     signal.signal(signal.SIGALRM, alarmHandler)
     signal.alarm(timeout)
     global user_choice
@@ -85,9 +85,7 @@ def new_command_request(prompt = '\nEnter "S" to switch satellites, "C" to chang
     return user_choice
 
 def new_command_execute(user_input):
-    '''
-    Takes user_input from new_command_request and executes appropriate command
-    '''
+    user_input = user_input.upper()
     if user_input == 'S':
         select_satellite()
         print "Executing new command..."
@@ -134,9 +132,8 @@ def main():
 
 
 
-#TODO: Test PyEphem frequecy tracking
-#TODO: Test pass time predition
-#TODO: Test plural version of functions to add satellite and load tles (issues before with appending sat list)
+#TODO: Control GQRX through script?
+#TODO: Add ability to switch between satellites. Currently having issue appending sat list from nostradamus.
 
 
 
@@ -151,12 +148,12 @@ def main():
 #Initial pos and rotorcmd for checking if satellite in range before starting loops
         print "\n______________Listening to Nostradamus______________\n"
         start_tracker(satellite)
+        shift = doppler_shift(frequency)
+        doppler_corrected_freq = frequency + shift
         check_LOS(satellite, pos)
 
-#Loop 1: If satellite not in LOS (i.e IN_RANGE frm check_LOS is False) then script loops the following
-#print sat pos, execute user command, request new user command execute new user command        
         while IN_RANGE is False:
-            check_satellite(satellite, pos)
+            check_satellite(satellite, pos, doppler_corrected_freq)
             command_execute()
             new_command_request()
             new_command_execute(user_choice)
@@ -164,7 +161,7 @@ def main():
 
         while IN_RANGE is True:
 #Prints current position of satellite
-            check_satellite(satellite, pos)
+            check_satellite(satellite, pos, new_freq)
 #Actions dependent on user selection from before
 #Entering 'q' quits the application
 #Entering 'p' returns the current position of the array
@@ -177,7 +174,7 @@ def main():
             new_command_execute(user_choice)
             break
 
-        time.sleep(1)
+        time.sleep(1) #seconds
 
 
 def command_execute():
@@ -186,19 +183,21 @@ def command_execute():
         quit()
     elif selection == 'p':
         get_position(az, el, rotorcmd)
+
+
     elif selection == 'P' and IN_RANGE:
         valid_set = set_position(az, el, rotorcmd)
-        ''' Uncomment this if you want to exit script when there is a Hamlib Error (RPRT -1)
+        '''
         if not valid_set:
             print "%s out of range. Exiting." % satellite
-            quit()
+            break
         '''
     elif selection == 'Q':
         print "\nParking the deathstar...\n"
         set_parking(az, el, rotorcmd)
         quit()
     else:
-        print "I think you broke me. Exit I guess? "
+        print "%s out of range. Tracking not engaged." % satellite
 
 
 def get_position(az, el, cmd):
@@ -250,9 +249,12 @@ def set_parking(az, el, cmd):
 def select_satellite():
     while True:
         global satellite
+        global frequency
         satellite = raw_input("Which satellite would you like to track? ")
         valid = n.addSatellite(satellite)
         if(valid):
+            if satellite == "FIREBIRD 4":
+                frequency = 437219000 #Hz
             break
         else:
             #check if spelling is correct or if satellite is in tle.txt
@@ -268,13 +270,20 @@ def command_request():
         else:
             break
 
-def check_satellite(sat, position):
+def check_satellite(sat, position, freq):
         check =  position.split(',')
         check_az = '%.2f' % float(check[0])
         check_el = '%.2f' % float(check[1])
+        check_vel = '%.3f' % vel
         print "Acquiring Target: %s " % sat
         print "AZ: " + str(check_az)
         print "EL: " + str(check_el)
+        print "Range Velocity: %s km/s" % str(check_vel)
+        print "AOS: %s (UTC)" % passinfo[0]
+        print "LOS: %s (UTC)" % passinfo[4]
+        #print "Rise azimuth: %s" % ('%.2f' % degrees(passinfo[1]))
+        print "Frequency: %s Hz" % str(frequency)
+        print "Doppler Shifted Frequency: %s Hz" % str(int(freq))
 
 def check_LOS(sat, position):
         #checks if satellite is above horizon. If below horizon, az can be set but not el
@@ -295,9 +304,16 @@ def start_tracker(sat):
     pos = n.position(sat)
     n.loadTLE(sat)
     pos = str(pos).strip('()')
+    global vel
+    vel = n.velocity(sat)
+    global passinfo
+    passinfo = n.nextpass(sat)
     global rotorcmd
     rotorcmd = selection + ' , ' + pos
     return rotorcmd
+
+def doppler_shift(freq):
+    return (vel/LIGHT_SPEED) * freq
 
 
 
