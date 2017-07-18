@@ -1,24 +1,29 @@
 #!/usr/bin/python
 
-# rot_split.py: allow gpredict to control GH RT-21 Az-El rotor controller
+# rot_split_V2.py: allow Nostradamus our Lord to control GH RT-21 Az-El rotor controller
 # Do not manually run this script. Run start_rotor.sh.
 # Written for UCLA's ELFIN mission <elfin.igpp.ucla.edu>
 # By Micah Cliffe (KK6SLK) <micah.cliffe@ucla.edu>
 # Edited by Alexander Gonzalez (KM6ISP) <gonzalezalexander1997@gmail.com>
 
-# Interface with GPredict removed. Azimuth and elevation from custom tracking script (nostradamus.py) that uses PyEphem.
+# Interface with GPredict removed. Satellite position from custom tracking script (nostradamus.py) using PyEphem. Rotor control via rotctl implementation. 
+#Frequency tracking with PyEphem. Radio control (GQRX) via rigctl implementation. 
 
 import socket
 import errno
 import time
 import nostradamus
 import signal
+import os.path
+import telnetlib
 from math import *
 
 # Constants
 HOST        = 'localhost'
+LOCALHOST   = '127.0.0.1'
 azPORT      = 4535
 elPORT      = 4537
+GQRXPORT    = 7356
 REC_SZ      = 1024
 RUN_FOREVER = True
 LIGHT_SPEED = 299792 #km/s
@@ -97,8 +102,37 @@ def new_command_execute(user_input):
     else:
         print "Unknown input. No changes made."
         pass
-###############################################################################
 
+###############################################################################
+class RadioControl():
+    """Basic rigctl client implementation."""
+
+    def __init__(self, hostname=LOCALHOST, port=GQRXPORT):
+        self.hostname = hostname
+        self.port = port
+
+    def _request(self, request):
+        con = telnetlib.Telnet(self.hostname, self.port)
+        con.write(('%s\n' % request).encode('ascii'))
+        response = con.read_some().decode('ascii').strip()
+        con.write('c\n'.encode('ascii'))
+        return response
+
+    def set_frequency(self, frequency):
+        return self._request('F %s' % frequency)
+
+    def get_frequency(self):
+        return self._request('f')
+
+    def set_mode(self, mode):
+        return self._request('M %s' % mode)
+
+    def get_mode(self):
+        return self._request('m')
+
+    def get_level(self):
+        return self._request('l')
+###############################################################################
 def main():
 
 #Creates sockets for az and el of rotor controller
@@ -114,7 +148,9 @@ def main():
     az.connect(HOST, azPORT)
     el.connect(HOST, elPORT)
     print "Connected to rotctld instances."
-
+#Initialize radio controller
+    global r
+    r = RadioControl()
 #Initialize nostradamus
     global n
     n = nostradamus.Predictor()
@@ -130,26 +166,27 @@ def main():
     print "\nSTATION: " + n.getStation()
     print "SATELLITES: " + str(n.getSatellites())
 
-
-
-#TODO: Control GQRX through script?
 #TODO: Add ability to switch between satellites. Currently having issue appending sat list from nostradamus.
-
-
-
+#TODO: Add frequency selection
 
 #Loop 1: IN_RANGE -> starts tracking
 #Loop 2: not IN_RANGE -> will print pos and keep checking for LOS.
 #When LOS established, loop 1 runs. When LOS lost, loop 2 runs.
 #RUN_FOREVER keeps the script switching between loop 1 and 2
+
     while RUN_FOREVER:
 
-#Initial check of LOS
-#Initial pos and rotorcmd for checking if satellite in range before starting loops
         print "\n______________Listening to Nostradamus______________\n"
+
+#Compute pos and put into rotorcmd
         start_tracker(satellite)
+
+#Doppler shifted frequency tracked and set in GQRX via port
         shift = doppler_shift(frequency)
-        doppler_corrected_freq = frequency + shift
+        doppler_corrected_freq = int(frequency + shift)
+        r.set_frequency(doppler_corrected_freq)
+
+#Check if satellite is in LOS to determine loop entry
         check_LOS(satellite, pos)
 
         while IN_RANGE is False:
@@ -160,16 +197,8 @@ def main():
             break
 
         while IN_RANGE is True:
-#Prints current position of satellite
             check_satellite(satellite, pos, doppler_corrected_freq)
-#Actions dependent on user selection from before
-#Entering 'q' quits the application
-#Entering 'p' returns the current position of the array
-#Entering 'P' begins tracking of the chosen satellite
-#Entering 'Q' parks array at AZ: 130 EL: 90 (safer to keep array in parked position when not in use)
             command_execute()
-
-#Request new command from user. Ignore request to continue as normal.
             new_command_request()
             new_command_execute(user_choice)
             break
@@ -183,8 +212,6 @@ def command_execute():
         quit()
     elif selection == 'p':
         get_position(az, el, rotorcmd)
-
-
     elif selection == 'P' and IN_RANGE:
         valid_set = set_position(az, el, rotorcmd)
         '''
@@ -198,7 +225,6 @@ def command_execute():
         quit()
     else:
         print "%s out of range. Tracking not engaged." % satellite
-
 
 def get_position(az, el, cmd):
     print "\nRequesting superlaser position... "
@@ -283,7 +309,8 @@ def check_satellite(sat, position, freq):
         print "LOS: %s (UTC)" % passinfo[4]
         #print "Rise azimuth: %s" % ('%.2f' % degrees(passinfo[1]))
         print "Frequency: %s Hz" % str(frequency)
-        print "Doppler Shifted Frequency: %s Hz" % str(int(freq))
+        print "Doppler Shifted Frequency: %s Hz" % str(freq)
+        print "GQRX Frequency: " + r.get_frequency() + " Hz"
 
 def check_LOS(sat, position):
         #checks if satellite is above horizon. If below horizon, az can be set but not el
@@ -313,7 +340,8 @@ def start_tracker(sat):
     return rotorcmd
 
 def doppler_shift(freq):
-    return (vel/LIGHT_SPEED) * freq
+    range_rate = abs(vel)
+    return (range_rate/LIGHT_SPEED) * freq
 
 
 
