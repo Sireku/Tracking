@@ -161,7 +161,7 @@ def main():
 
         while IN_RANGE is True:
 #Prints current position of satellite
-            check_satellite(satellite, pos, new_freq)
+            check_satellite(satellite, pos, doppler_corrected_freq)
 #Actions dependent on user selection from before
 #Entering 'q' quits the application
 #Entering 'p' returns the current position of the array
