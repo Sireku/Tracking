@@ -6,8 +6,7 @@
 # By Micah Cliffe (KK6SLK) <micah.cliffe@ucla.edu>
 # Edited by Alexander Gonzalez (KM6ISP) <gonzalezalexander1997@gmail.com>
 
-# Interface with GPredict removed. Satellite position from custom tracking script (nostradamus.py) using PyEphem. Rotor control via rotctl implementation. 
-#Frequency tracking with PyEphem. Radio control (GQRX) via rigctl implementation. 
+# Interface with GPredict removed. Azimuth and elevation from custom tracking script (nostradamus.py) that uses PyEphem.
 
 import socket
 import errno
@@ -166,8 +165,9 @@ def main():
     print "\nSTATION: " + n.getStation()
     print "SATELLITES: " + str(n.getSatellites())
 
-#TODO: Add ability to switch between satellites. Currently having issue appending sat list from nostradamus.
-#TODO: Add frequency selection
+#TODO: auto switch between csun and firebird. how i do dat???
+#TODO: get pass time in PST
+
 
 #Loop 1: IN_RANGE -> starts tracking
 #Loop 2: not IN_RANGE -> will print pos and keep checking for LOS.
@@ -176,8 +176,9 @@ def main():
 
     while RUN_FOREVER:
 
-        print "\n______________Listening to Nostradamus______________\n"
-
+        print "\n______________Listening to Nostradamus______________"
+        print "\nSTATION: " + n.getStation()
+        print "SATELLITES: " + str(n.getSatellites()) + "\n"
 #Compute pos and put into rotorcmd
         start_tracker(satellite)
 
@@ -211,9 +212,10 @@ def command_execute():
         print "\nSHUTTING DOWN DEATHSTAR."
         quit()
     elif selection == 'p':
-        get_position(az, el, rotorcmd)
-    elif selection == 'P' and IN_RANGE:
+        get_position(az, el)
+    elif selection == 'P': # and IN_RANGE:
         valid_set = set_position(az, el, rotorcmd)
+        get_position(az, el)
         '''
         if not valid_set:
             print "%s out of range. Exiting." % satellite
@@ -226,11 +228,13 @@ def command_execute():
     else:
         print "%s out of range. Tracking not engaged." % satellite
 
-def get_position(az, el, cmd):
+def get_position(az, el):
     print "\nRequesting superlaser position... "
-    az.send(cmd)
+    azCtrl = 'p' + ' ' + '0' + ' 0\n'
+    az.send(azCtrl)
     az_response = az.get_response().splitlines()[0]
-    el.send(cmd)
+    elCtrl = 'p' + ' ' + '0' + ' 0\n'
+    el.send(elCtrl)
     el_response = el.get_response().splitlines()[0]
     response = "\nAZ: " + az_response + '\n' + "EL: "+  el_response + '\n'
     print "Response: " + response
@@ -241,6 +245,8 @@ def set_position(az, el, cmd):
     # cmd = [P, AZIMUTH, ELEVATION]
     azCtrl = cmd[0] + ' ' + cmd[1] + ' 0\n'
     az.send(azCtrl)
+    if float(cmd[2]) < 0:
+        cmd[2] = '0'
     elCtrl = cmd[0] + ' ' + cmd[2] + ' 0\n'
     el.send(elCtrl)
     print "Commands sent."
@@ -254,7 +260,7 @@ def set_position(az, el, cmd):
     if az_resp == el_resp and az_resp == "RPRT 0\n":
         pass
     else:
-        print "SUPERLASER MALFUNCTION."
+        print "HAMLIB ERROR."
         return 0
 
 def set_parking(az, el, cmd):
@@ -277,10 +283,16 @@ def select_satellite():
         global satellite
         global frequency
         satellite = raw_input("Which satellite would you like to track? ")
+
         valid = n.addSatellite(satellite)
         if(valid):
             if satellite == "FIREBIRD 4":
                 frequency = 437219000 #Hz
+            elif satellite == "CSUNSAT 1":
+                frequency = 437400000 #Hz
+            else:
+                frequency =raw_input("Enter center frequency: ")
+                frequency = int(frequency)
             break
         else:
             #check if spelling is correct or if satellite is in tle.txt
@@ -304,7 +316,7 @@ def check_satellite(sat, position, freq):
         print "Acquiring Target: %s " % sat
         print "AZ: " + str(check_az)
         print "EL: " + str(check_el)
-        print "Range Velocity: %s km/s" % str(check_vel)
+        print "Range Rate: %s km/s" % str(check_vel)
         print "AOS: %s (UTC)" % passinfo[0]
         print "LOS: %s (UTC)" % passinfo[4]
         #print "Rise azimuth: %s" % ('%.2f' % degrees(passinfo[1]))
@@ -319,10 +331,10 @@ def check_LOS(sat, position):
         check_el = float(check[1])
         global IN_RANGE
         if check_el < 0:
-            print "%s currently below horizon. EL cannot be set. " % sat
+            print "%s currently below horizon. EL cannot be set. \n" % sat
             IN_RANGE = False
         else:
-            print "%s in LOS. Tracking can commence." % sat
+            print "%s in LOS. Tracking can commence. \n" % sat
             IN_RANGE = True
         return IN_RANGE
 
