@@ -15,6 +15,7 @@ import nostradamus
 import signal
 import os.path
 import telnetlib
+import datetime
 from math import *
 
 # Constants
@@ -156,7 +157,9 @@ def main():
 
 #Update TLEs before starting
     n.updateTLEs()
-
+#Create satellite list
+    global satellite_list
+    satellite_list = []
 #Choose satellite to track and command to send to rotor controller
     select_satellite()
     command_request()
@@ -165,9 +168,17 @@ def main():
     print "\nSTATION: " + n.getStation()
     print "SATELLITES: " + str(n.getSatellites())
 
-#TODO: auto switch between csun and firebird. how i do dat???
-#TODO: get pass time in PST
+#TODO: auto switch between csun and firebird. Plan:
+#   DONE: Create list of sats
+#   for sat in list, loadtle and assign to sat[index]
+#   in for loop run start_track and check_aos for all sats in list
+#   if check_aos returns true set sat[index] = satellite
+#   if check_aos returns false set satellite = None and run check_satellite in for loop to print pos of sat[index]
 
+#TODO: point at rise azimuth of next pass or park in between passes
+# possibly keep park and ~5 mins before pass point as rise azimuth (would speed up pointing at satellite, may help get few extra packets)
+
+#TODO: function for doppler frequency. If sats in list not in range, do not set frequency in gqrx
 
 #Loop 1: IN_RANGE -> starts tracking
 #Loop 2: not IN_RANGE -> will print pos and keep checking for LOS.
@@ -179,16 +190,26 @@ def main():
         print "\n______________Listening to Nostradamus______________"
         print "\nSTATION: " + n.getStation()
         print "SATELLITES: " + str(n.getSatellites()) + "\n"
+        #print satellite_list
 #Compute pos and put into rotorcmd
-        start_tracker(satellite)
+
+        for i in range(0, len(satellite_list)):
+            start_tracker(satellite_list[i])
+
+        #start_tracker(satellite)
+
+
+
+
 
 #Doppler shifted frequency tracked and set in GQRX via port
+# -vel shift right, +vel shift left
         shift = doppler_shift(frequency)
-        doppler_corrected_freq = int(frequency + shift)
+        doppler_corrected_freq = int(frequency - shift)
         r.set_frequency(doppler_corrected_freq)
 
 #Check if satellite is in LOS to determine loop entry
-        check_LOS(satellite, pos)
+        check_AOS(satellite, pos)
 
         while IN_RANGE is False:
             check_satellite(satellite, pos, doppler_corrected_freq)
@@ -204,7 +225,7 @@ def main():
             new_command_execute(user_choice)
             break
 
-        time.sleep(1) #seconds
+        time.sleep(.5) #seconds
 
 
 def command_execute():
@@ -213,7 +234,7 @@ def command_execute():
         quit()
     elif selection == 'p':
         get_position(az, el)
-    elif selection == 'P': # and IN_RANGE:
+    elif selection == 'P' and IN_RANGE:
         valid_set = set_position(az, el, rotorcmd)
         get_position(az, el)
         '''
@@ -226,7 +247,7 @@ def command_execute():
         set_parking(az, el, rotorcmd)
         quit()
     else:
-        print "%s out of range. Tracking not engaged." % satellite
+        print "Currently no AOS for %s. Tracking not engaged." % satellite
 
 def get_position(az, el):
     print "\nRequesting superlaser position... "
@@ -255,8 +276,8 @@ def set_position(az, el, cmd):
     az_resp = az.get_response()
     el_resp = el.get_response()
     print "Checking superlaser..."
-    print "AZ: " + az_resp
-    print "EL: " + el_resp
+    #print "AZ: " + az_resp
+    #print "EL: " + el_resp
     if az_resp == el_resp and az_resp == "RPRT 0\n":
         pass
     else:
@@ -283,13 +304,18 @@ def select_satellite():
         global satellite
         global frequency
         satellite = raw_input("Which satellite would you like to track? ")
-
+        if satellite not in satellite_list:
+            satellite_list.append(satellite)
+        else:
+            print "%s already in list." % satellite
         valid = n.addSatellite(satellite)
         if(valid):
             if satellite == "FIREBIRD 4":
                 frequency = 437219000 #Hz
             elif satellite == "CSUNSAT 1":
                 frequency = 437400000 #Hz
+            elif satellite == "TIGRISAT":
+                frequency = 435000000 #Hz
             else:
                 frequency =raw_input("Enter center frequency: ")
                 frequency = int(frequency)
@@ -308,6 +334,10 @@ def command_request():
         else:
             break
 
+def get_time_now():
+    utc_now = datetime.datetime.utcnow().strftime(" %H:%M:%S (UTC)")
+    return utc_now
+
 def check_satellite(sat, position, freq):
         check =  position.split(',')
         check_az = '%.2f' % float(check[0])
@@ -317,6 +347,7 @@ def check_satellite(sat, position, freq):
         print "AZ: " + str(check_az)
         print "EL: " + str(check_el)
         print "Range Rate: %s km/s" % str(check_vel)
+        print "Current time: " + get_time_now()
         print "AOS: %s (UTC)" % passinfo[0]
         print "LOS: %s (UTC)" % passinfo[4]
         #print "Rise azimuth: %s" % ('%.2f' % degrees(passinfo[1]))
@@ -324,35 +355,41 @@ def check_satellite(sat, position, freq):
         print "Doppler Shifted Frequency: %s Hz" % str(freq)
         print "GQRX Frequency: " + r.get_frequency() + " Hz"
 
-def check_LOS(sat, position):
+def check_AOS(sat, position):
         #checks if satellite is above horizon. If below horizon, az can be set but not el
         check =  position.split(',')
         check_az = float(check[0])
         check_el = float(check[1])
         global IN_RANGE
         if check_el < 0:
-            print "%s currently below horizon. EL cannot be set. \n" % sat
+            print "%s currently below horizon. Awaiting AOS. \n" % sat
             IN_RANGE = False
         else:
-            print "%s in LOS. Tracking can commence. \n" % sat
+            print "%s AOS Success. Tracking commencing. \n" % sat
             IN_RANGE = True
         return IN_RANGE
 
 def start_tracker(sat):
     global pos
-    pos = n.position(sat)
-    n.loadTLE(sat)
-    pos = str(pos).strip('()')
     global vel
-    vel = n.velocity(sat)
-    global passinfo
-    passinfo = n.nextpass(sat)
     global rotorcmd
+    global passinfo
+    pos = []
+    vel = []
+    rotorcmd = []
+    passinfo = []
+    n.loadTLE(sat)
+    temp_pos = n.position(sat)
+    temp_pos = str(temp_pos).strip('()')
+    pos.append(temp_pos)
+    temp_vel = n.velocity(sat)
+    vel.append(temp_vel)
+    passinfo = n.nextpass(sat)
     rotorcmd = selection + ' , ' + pos
     return rotorcmd
 
 def doppler_shift(freq):
-    range_rate = abs(vel)
+    range_rate = vel
     return (range_rate/LIGHT_SPEED) * freq
 
 
